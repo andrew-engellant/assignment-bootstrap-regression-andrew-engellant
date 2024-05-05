@@ -1,0 +1,157 @@
+---
+html_document:
+  toc: true
+author: "Andrew Engellant"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+title: "Bootstrapping Regression Metrics"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+
+```
+
+## Introduction
+
+In this assignment we use bootstrapping to estimate the standard error 
+of several regression coefficients. We did this in class with adjusted R-squared.
+
+In the past few assignments I've created most of the framework for you and 
+asked you to fill in pieces that I've left blank. This assignment is 
+different. I'll ask you use techniques we've discussed to answer some questions
+that I'll ask, but you'll be doing most of the coding and writing on your own. 
+Feel free to use this actual RMD file for your writing, but now you'll need 
+to know how to do code blocks and things like that. If you're anything like me,
+you'll find the 
+[R Markdown Cheat Sheet](https://github.com/rstudio/cheatsheets/raw/master/rmarkdown-2.0.pdf)
+invaluable. Please write this document with attention to things like headers, 
+spelling, and formatting. It need not be as polished as a formal report, but 
+I'll ask you to revise it if it looks like garbage. I'm not expecting a ton of writing here, but I'd like 
+it to look nice. Remember to knit your document to HTML and commit both 
+your RMD and HTML files. 
+
+## Assignment
+
+Here is what I'd like you do: 
+
+1. Begin by building a regression model using the satisfaction survey data. Have your 
+model predict satisfaction as a function of tenure and assigned sex. This is the model
+we built in class (in synchronous years). 
+1. Describe the results briefly. This means reporting the $R^2$, the residual standard
+errors, the coefficients and their standard errors. This model 
+should have four terms, with one each for the intercept and tenure and two for 
+assigned sex. 
+1. Use bootstrap resampling (either the `rsample` method or the manual method) to 
+generate standard error estimates for the residual standard error and the model terms. 
+Report the 90% confidence interval for these statistics from the bootstrap replicates. 
+1. Briefly compare the values from `summary.lm` to the bootstrap replicates. 
+
+As always, please me know if you have any questions. Feel free to ask on Teams 
+so that your
+classmates benefit from your curiosity or confusion. 
+
+### Multiple Regression Model
+
+```{r}
+d <- read_tsv(paste("satisfaction_survey.txt", sep = "/"))
+
+#plot the data
+ggplot(d, aes(x = tenure, y = satisfaction, color = assigned_sex)) +
+  geom_point() +
+  labs(title = "Satisfaction vs Tenure by Assigned Sex",
+       x = "Tenure",
+       y = "Satisfaction")
+
+#create a model
+m <- lm(satisfaction ~ tenure + assigned_sex, data = d)
+
+summary(m)
+# adjust x-axis by average tenure to make for a better intercept interpretation
+d <- d %>%
+  mutate(tenure = tenure - mean(tenure))
+
+am <- lm(satisfaction ~ tenure + assigned_sex, data = d)
+
+s <- summary(am)
+
+s
+```
+
+
+The regression model using tenure and assigned sex to predict satisfaction has an overall p-value < 0.001 and a $R^2$ of 0.1439. This means the model is highly significant and 14.39% of the total variance in satisfaction can be explained by tenure and assigned sex alone. The $s_e$ is 1.013, meaning the models predictions are likely to be within 1.013 units from the true reported satisfaction. 
+
+There are four coefficients reported in this model and can be represented by this equation. 
+
+Satisfaction = 3.639 + 0.223(tenure) + 0.554(sexMale) + -0.369(sexNeither)
+
+The intercept, $b_0$, represents the predicted average satisfaction for a female who's has an average tenure. This coefficient has a p-value < 0.001 and is highly significant. The tenure coefficient, $b_1$, indicates that a one year increase in tenure is associated with a 0.223 unit increase in predicated average satisfaction. This coefficient also has a p-value < 0.001 and is highly significant. The sexMale coefficient, $b_2$, indicates that males are predicted to have a 0.223 unit higher satisfaction than females for a given tenure. This value has a p-value < 0.001 and is highly significant. The last coefficient is sexNeither, $b_3$, and has a p-value = 0.272. This coefficient is not statistically significant. 
+
+
+### Bootstrap 
+
+```{r}
+# store the actual values in the data
+measured.val.b0 <- coef(s)[1,2]
+measured.val.b1 <- coef(s)[2,2]
+measured.val.b2 <- coef(s)[3,2]
+measured.val.b3 <- coef(s)[4,2]
+measured.val.se <- s$sigma
+
+
+# the number of simulations to do
+n.sim <- 1000
+set.seed(314159) # ensures repeatable results. 
+
+# Create a data frame to hold our results. 
+results <- data.frame(matrix(ncol = 5, nrow = n.sim))
+colnames(results) <- c("se_b0", "se_b1", "se_b2", "se_b3", "se_residuals")
+
+#perform bootstrap
+for(i in 1:n.sim){
+  
+  new.d <- d %>% 
+    slice_sample(n=nrow(d),replace=T)
+  
+  new.m <- lm(satisfaction ~ tenure + assigned_sex, data = new.d)
+  new.s <- summary(new.m)
+  
+  results$se_b0[i] <- coef(new.s)[1,2]
+  results$se_b1[i] <- coef(new.s)[2,2]
+  results$se_b2[i] <- coef(new.s)[3,2]
+  results$se_b3[i] <- coef(new.s)[4,2]
+  results$se_residuals[i] <- new.s$sigma
+  
+}
+
+#plot the results
+ggplot(results,
+       aes(x=se_residuals)) + 
+  geom_density() + 
+  theme_bw() + 
+  labs(x="Residual Standard Error") + 
+  geom_vline(xintercept=measured.val.se,col="red") +
+  geom_vline(xintercept = quantile(results$se_residuals, probs = c(0.05,0.5,0.95)),
+             col = c("grey", "black", "grey"))
+```
+
+
+Above is a plot of the results for the $s_e$ term from the bootstrap resample. Using bootstrap resampling, 90% confidence intervals can be estimated for both the standard errors of each coefficient, as well as the residual standard error term for the regression model. These confidence intervals are reported below. 
+
+$b_0$ standard error 90% confidence interval = (`r round(quantile(results$se_b0, c(0.05, 0.95)), 3)`)
+
+$b_1$ standard error 90% confidence interval = (`r round(quantile(results$se_b1, c(0.05, 0.95)), 3)`) 
+
+$b_2$ standard error 90% confidence interval = (`r round(quantile(results$se_b2, c(0.05, 0.95)), 3)`) 
+
+$b_3$ standard error 90% confidence interval = (`r round(quantile(results$se_b3, c(0.05, 0.95)), 3)`)
+
+$s_e$ 90% confidence interval = (`r round(quantile(results$se_residuals, c(0.05, 0.95)), 3)`)
+
+
+The reported values of each of these standard error terms from the summary function are all similar to the results of the bootstrap resample. For instance, the reported $s_e$ from the summary function is `r round(measured.val.se, 3)` and the bootstrap resample result is `r round(quantile(results$se_residuals, 0.5), 3)`, a difference of `r round(measured.val.se, 3) - round(quantile(results$se_residuals, 0.5), 3)`. 
+
+### Question:
+Should I use the 0.5 quantile from the bootstrap resample or the mean value from the resample for this comparison to the summary function results?
+
